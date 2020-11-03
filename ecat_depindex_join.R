@@ -5,6 +5,7 @@ library(sf)
 library(tigris)
 library(tmap)
 library(tmaptools)
+library(ggplot2)
 tmap_mode("plot")
 
 #ecat bounding box
@@ -36,17 +37,18 @@ di_tracts<-left_join(all_tracts,dep_index,by=c("GEOID"="census_tract_fips")) %>%
   st_transform(5072)
   
 
-#join together
+#join ecat and dep index together
 ecat_dep<-st_join(ecat_tracts,di_tracts,) %>%
   select(ecat,GEOID.x,GEOID.y,fraction_assisted_income:geom)%>%
   st_transform(3735)
 
-#Make plots with tmap
+#road map layer
 map_roads <-
   tigris::primary_roads() %>%
   st_transform(5072) %>%
   st_intersection(ecat_bb)
 
+#ecat and dep index maps
 ecat_only_map<-
   #tm_basemap(leaflet::providers$CartoDB.Positron) +
   tm_shape(st_transform(map_roads,3735))+
@@ -70,13 +72,13 @@ di_only_map<-
   tm_layout(legend.frame = T, legend.bg.color = "ivory", legend.position = c("left","top"))
 di_only_map
 
-losdos<-
-  tmap_arrange(ecat_only_map,di_only_map)
-  tm_basemap(leaflet::providers$CartoDB.Positron) +
-  tm_shape(ecat_dep)+
-  tm_polygons(c("ecat", "dep_index")) +
-  tm_facets(sync = TRUE, ncol = 2)
-losdos
+# losdos<-
+#   tmap_arrange(ecat_only_map,di_only_map)
+#   tm_basemap(leaflet::providers$CartoDB.Positron) +
+#   tm_shape(ecat_dep)+
+#   tm_polygons(c("ecat", "dep_index")) +
+#   tm_facets(sync = TRUE, ncol = 2)
+# losdos
 
 tmap_save(ecat_only_map,"ecat_map_only.png")
 tmap_save(di_only_map,"dep_index_map_only.png")
@@ -88,19 +90,18 @@ ecat_dep<-ecat_dep %>%
   mutate(ecat_contrib = ecat[] *  coeff[7,2]) %>%
   mutate(depind_contrib = dep_index[] *  coeff[8,2])
 
-# ecat_dep$ecat_contrib<-0
-# ecat_dep$depind_contrib<-0
-# for (i in 1:nrow(ecat_dep)){
-#   ecat_dep$ecat_contrib[i] <- ecat_dep$ecat[i] * coeff[7,2]
-#   ecat_dep$depind_contrib[i] <- ecat_dep$dep_index[i] * coeff[8,2]
-#}
-   
-#Maps of the contributions 
+#establish the color gradient for contribution maps
+mypal<-scale_fill_gradient2(low="red",
+                            mid = "white",
+                            high="green",
+                            midpoint=0)
+
+#Maps of the contributions for ecat and dep index
 ecat_contribution_map<-
   tm_shape(st_transform(map_roads,3735))+
   tm_lines(col="black",lwd=4,alpha=.6)+
   tm_shape(ecat_dep)+
-  tm_fill("ecat_contrib", pallete = "YlOrRd", alpha = 0.8,
+  tm_fill("ecat_contrib", pallete = mypal, alpha = 0.8,
           title = c("ECAT\nContribution"),
           legend.format = list(text.separator = "to"),
           popup.vars=c('ECAT'='ecat_contr'))+
@@ -146,6 +147,14 @@ drivetime_map<-
   tm_layout(legend.frame = T, legend.bg.color = "ivory", legend.position = c("left","top"))
 drivetime_map
 
+#plot with geom_sf to try and control colors
+mycols<-colorRampPalette(RColorBrewer::brewer.pal(9,"YlGnBu"))(11)
+drive_map<-ggplot(data=ecat_dep)+
+  geom_sf(mapping = aes(fill=drive_time),color=NA)+
+  scale_fill_manual(values = mycols)+
+  geom_sf(data=map_roads,alpha=.6)
+drive_map
+
 #Add drivetime coefficients into the appropriate rows
 ecat_dep<-ecat_dep %>% mutate(drive_contrib = 
  ifelse(drive_time == "6",  coeff[18,2],
@@ -169,6 +178,12 @@ drive_contrib_map<-
   tm_layout(legend.frame = T, legend.bg.color = "ivory", legend.position = c("left","top"))
 drive_contrib_map
 
+d_contrib_map2<-drive_map<-ggplot(data=ecat_dep)+
+  geom_sf(mapping = aes(fill=drive_contrib),color=NA)+
+  scale_fill_manual(values = mycols)+
+  geom_sf(data=map_roads,alpha=.6)
+d_contrib_map2
+
 tmap_save(drivetime_map,"drivetime_map_only.png")
 tmap_save(drive_contrib_map,"drivetime_map_contribution.png")
 
@@ -188,9 +203,25 @@ utils::download.file(
 
 
 #overall contribution map
+ecat_dep<-ecat_dep %>%
+  mutate(id=row_number())
 ecat_dep2<-ecat_dep %>%
-  as.numeric(ecat_dep$ecat_contrib,ecat_dep$depind_contrib,ecat_dep$drive_contrib) %>%
-  mutate(tot_contrib = rowSums(.[3,4,8]))# %>%
-  #as.character(ecat_contrib,depind_contrib,drive_contrib)
+  select(id,ecat_contrib,depind_contrib,drive_contrib)%>%
+  st_drop_geometry()%>%
+  mutate(tot_contrib = rowSums(select(.,contains("contrib"))))
+total_contrib<-left_join(ecat_dep2,ecat_dep,by=c("id"),copy=F) %>%
+  st_as_sf()
+
+total_contrib_map<-
+  tm_shape(st_transform(map_roads,3735))+
+  tm_lines(col="black",lwd=4,alpha=.6)+
+  tm_shape(total_contrib)+
+  tm_fill("tot_contrib",alpha=0.8,
+          title=c("Overall\nContribution"))+
+  tm_layout(legend.frame = T, legend.bg.color = "ivory", legend.position = c("left","top"))
+total_contrib_map
+
+tmap_save(total_contrib_map,"total_contribution_map.png")
+
 
 
